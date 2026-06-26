@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js Hoành Tráng: Tinh Cầu Trái Tim & Bệ Đỡ</title>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+    <script type="x-shader/x-vertex" id="vertexShader">
+        uniform float uTime;
+        uniform float uPixelRatio;
+        uniform float uSize;
+
+        attribute float aScale; 
+        varying vec3 vPosition;
+
+        void main() {
+            vec3 newPosition = position;
+
+            // Tạo chuyển động dao động nhẹ nhàng cho hạt trái tim
+            float angle = uTime * 0.3; 
+            newPosition.x += sin(newPosition.z * 1.5 + angle) * 0.1;
+            newPosition.y += cos(newPosition.x * 2.0 + angle) * 0.08;
+            newPosition.z += sin(newPosition.y * 3.0 + angle) * 0.05;
+
+            vec4 modelPosition = modelMatrix * vec4(newPosition, 1.0);
+            vec4 viewPosition = viewMatrix * modelPosition;
+            gl_Position = projectionMatrix * viewPosition;
+
+            gl_PointSize = uSize * aScale * uPixelRatio;
+            gl_PointSize *= (1.0 / - viewPosition.z); 
+
+            vPosition = newPosition;
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="fragmentShader">
+        varying vec3 vPosition;
+
+        void main() {
+            float strength = distance(gl_PointCoord, vec2(0.5));
+            strength = 1.0 - strength;
+            strength = pow(strength, 6.0); 
+
+            // Tạo màu sắc chuyển động dọc theo hình trái tim
+            vec3 color = vec3(0.0);
+            color.r = abs(sin(vPosition.x * 4.0 + vPosition.y));
+            color.g = abs(cos(vPosition.y * 2.0));
+            color.b = 0.8; 
+
+            gl_FragColor = vec4(color, strength);
+        }
+    </script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // ==========================================
+        // 1. THIẾT LẬP SCENE, CAMERA, RENDERER
+        // ==========================================
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x000000, 1, 15); 
+
+        // Nạp ảnh nền vũ trụ (Dùng link online chống lỗi CORS, bạn có thể đổi sau)
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load('nebula.png', (texture) => {
+            texture.mapping = THREE.EquirectangularReflectionMapping;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            scene.background = texture;
+        });
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 4.5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // ==========================================
+        // 2. TẠO HẠT SÁNG HÌNH TRÁI TIM (MATH)
+        // ==========================================
+        const particleCount = 25000; 
+        const positions = new Float32Array(particleCount * 3);
+        const scales = new Float32Array(particleCount);
+
+        let i = 0;
+        while (i < particleCount) {
+            const x = (Math.random() - 0.5) * 2.5;
+            const y = (Math.random() - 0.5) * 2.5;
+            const z = (Math.random() - 0.5) * 2.5;
+
+            const term1 = x * x + (9 / 4) * y * y + z * z - 1;
+            const equation = term1 * term1 * term1 - x * x * z * z * z - (9 / 80) * y * y * z * z * z;
+
+            if (equation <= 0 && equation >= -0.15) {
+                const i3 = i * 3;
+                positions[i3 + 0] = x * 1.3; 
+                positions[i3 + 1] = y * 1.3 + 0.3; // Nâng nhẹ trái tim lên trên bệ đỡ
+                positions[i3 + 2] = z * 1.3;
+
+                scales[i] = Math.random();
+                i++;
+            }
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('aScale', new THREE.BufferAttribute(scales, 1));
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader: document.getElementById('vertexShader').textContent,
+            fragmentShader: document.getElementById('fragmentShader').textContent,
+            uniforms: {
+                uTime: { value: 0 },
+                uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+                uSize: { value: 20.0 } 
+            },
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        // ==========================================
+        // 3. KHỞI TẠO BỆ ĐỠ XOAY CÓ CHỮ (ĐƯA RA NGOÀI ANIMATE)
+        // ==========================================
+        const textToDisplay = "  LƯU ĐỨC ANH  •  THREE.JS PROJECT  •  2026  •  "; 
+
+        const textCanvas = document.createElement('canvas');
+        const ctx = textCanvas.getContext('2d');
+        textCanvas.width = 1024; 
+        textCanvas.height = 128; 
+
+        ctx.fillStyle = '#000000'; 
+        ctx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+        ctx.font = 'Bold 38px "Courier New", monospace'; 
+        ctx.fillStyle = '#00ff88'; 
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(textToDisplay, textCanvas.width / 2, textCanvas.height / 2);
+
+        const textTexture = new THREE.CanvasTexture(textCanvas);
+        textTexture.wrapS = THREE.RepeatWrapping; 
+        textTexture.repeat.x = 2; 
+
+        const pedestalGroup = new THREE.Group(); 
+
+        const bodyGeo = new THREE.CylinderGeometry(1.4, 1.4, 0.3, 32);
+        const bodyMat = new THREE.MeshBasicMaterial({
+            map: textTexture,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+        const pedestalBody = new THREE.Mesh(bodyGeo, bodyMat);
+        pedestalGroup.add(pedestalBody);
+
+        const wireGeo = new THREE.CylinderGeometry(1.42, 1.42, 0.32, 16);
+        const wireMat = new THREE.MeshBasicMaterial({
+            color: 0x00aaff,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.25
+        });
+        const pedestalWire = new THREE.Mesh(wireGeo, wireMat);
+        pedestalGroup.add(pedestalWire);
+
+        pedestalGroup.position.y = -1.6; // Đặt bệ đỡ ngay dưới chân trái tim
+        scene.add(pedestalGroup);
+
+        // Chuột tương tác
+        const mouse = new THREE.Vector2();
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        // ==========================================
+        // 4. VÒNG LẶP ANIMATION (CHỈ UPDATE CHUYỂN ĐỘNG)
+        // ==========================================
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsedTime = clock.getElapsedTime();
+            
+            // Cập nhật thời gian cho Shader hạt
+            material.uniforms.uTime.value = elapsedTime;
+
+            // Xoay nhẹ khối hạt theo chuột
+            particles.rotation.y = mouse.x * 0.15;
+            particles.rotation.x = -mouse.y * 0.15;
+			
+            // Xoay bệ đỡ và cuộn chữ
+            pedestalGroup.rotation.y = elapsedTime * 0.2; 
+            textTexture.offset.x = elapsedTime * 0.04; 
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Tự động tương thích màn hình khi thay đổi kích thước
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio, 2);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
